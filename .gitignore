@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Variables de entorno — NUNCA al repo
+.env
+*.env.local
+
+# Node
+node_modules/
+.next/
+dist/
+build/
+.turbo/
+
+# ML
+ml/data/*.csv
+ml/data/*.parquet
+ml/models/*.pkl
+*.model
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Logs
+*.log
+logs/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
