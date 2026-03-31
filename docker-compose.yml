@@ -4,14 +4,22 @@ version: '3.9'
 # SaludCopilot — Entorno de desarrollo local
 #
 # USO:
-#   docker compose up          → levanta PostgreSQL + Redis + API
-#   docker compose up -d       → en background
-#   docker compose down -v     → apaga y borra datos (reset total)
+#   docker compose up             → levanta todos los servicios
+#   docker compose up dashboard   → solo el dashboard con HMR
+#   docker compose up -d          → en background
+#   docker compose down -v        → apaga y borra datos (reset total)
 #
-# Lo que NO corre aquí (corren con su propio comando):
-#   - dashboard (Next.js dev server)
-#   - bot (proceso Python independiente)
-#   - cv  (proceso Python con webcam)
+# Servicios con hot reload:
+#   - api       → uvicorn --reload  en :8000
+#
+# Lo que corre local (fuera de Docker):
+#   - dashboard → cd apps/dashboard && bun run dev   → :3000
+#   - bot       → proceso Python independiente
+#   - cv        → proceso Python con webcam
+#
+# El dashboard NO corre en Docker porque bun.lockb es binario y específico
+# a la versión de bun — la imagen del contenedor siempre difiere, lo que
+# causa que --frozen-lockfile falle. El dev server local arranca en <2s.
 # ─────────────────────────────────────────────────────────────────────────
 
 services:
@@ -29,8 +37,9 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./scripts/db_init.sql:/docker-entrypoint-initdb.d/init.sql:Z
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -42,7 +51,7 @@ services:
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -53,10 +62,12 @@ services:
       dockerfile: apps/api/Dockerfile.dev
     container_name: saludcopilot_api
     restart: unless-stopped
+    user: root
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
+      WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
     volumes:
@@ -68,6 +79,35 @@ services:
       redis:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  dashboard:
+    build:
+      context: ./apps/dashboard
+      dockerfile: Dockerfile.dev
+    container_name: saludcopilot_dashboard
+    restart: unless-stopped
+    env_file: .env
+    platform: linux/amd64
+    environment:
+      # Force file-system polling so Next.js HMR works inside Docker
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+      # Point dashboard at the API container (not localhost)
+      NEXT_PUBLIC_API_URL: http://api:8000
+      NEXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount full dashboard dir for hot reload
+      - ./apps/dashboard:/app:Z
+      # Prevent host node_modules from overriding container's
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    stdin_open: true
+    tty: true
+    command: bun run dev
 
 volumes:
   postgres_data:

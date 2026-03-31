@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand */
+  --color-brand-green:        #008A4B;
+  --color-brand-blue:         #005B9F;
+
+  /* Surface */
+  --color-surface-base:       #F4F6FA;
+  --color-surface-card:       #FFFFFF;
+  --color-surface-border:     #DDE1EC;
+
+  /* Content */
+  --color-content-primary:    #1A1D2E;
+  --color-content-secondary:  #6B7080;
+
+  /* Alert */
+  --color-alert-red:          #DC2626;
+  --color-alert-yellow:       #D97706;
+}
+
+body {
+  background-color: #F4F6FA;
+  color: #1A1D2E;
+}

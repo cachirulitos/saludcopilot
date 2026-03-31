@@ -9,8 +9,8 @@
 ## Current status
 
 - [x] Project scaffold created
-- [ ] Next.js 14 initialized with Tailwind
-- [ ] Layout: sidebar + top bar
+- [x] Next.js initialized with Tailwind v4 (light theme)
+- [x] Layout: sidebar + top bar
 - [ ] Mock data layer
 - [ ] Metric cards (top row)
 - [ ] Area status table
@@ -23,7 +23,7 @@
 
 ## Visual reference
 
-Dark theme. Left sidebar (240px fixed). Top bar (64px).
+Tema claro. Left sidebar (240px fixed). Top bar (64px).
 Top row: 4 metric cards with large numbers.
 Center: real-time line chart (left) + area status table (right).
 Bottom: active patients table.
@@ -31,15 +31,16 @@ Right column: alerts panel.
 
 **Color palette — use these exactly:**
 ```
-Background:       #0F1117
-Card background:  #1A1D27
-Card border:      #2A2D3A
-Green accent:     #008A4B  (Salud Digna green)
-Blue accent:      #005B9F  (medical blue)
-Text primary:     #F0F0F0
-Text secondary:   #8B8FA8
-Alert red:        #E53E3E
-Alert yellow:     #F6AD55
+Background:       #F4F6FA   (gris-azul muy suave)
+Card background:  #FFFFFF
+Card border:      #DDE1EC
+Sidebar bg:       #FFFFFF   (con sombra leve, no borde)
+Green accent:     #008A4B   (verde Salud Digna)
+Blue accent:      #005B9F   (azul médico)
+Text primary:     #1A1D2E   (navy oscuro)
+Text secondary:   #6B7080   (gris medio)
+Alert red:        #DC2626
+Alert yellow:     #D97706
 ```
 
 ---
@@ -53,28 +54,25 @@ pnpm add recharts lucide-react
 pnpm add -D @types/node
 ```
 
-Extend `tailwind.config.ts` with SaludCopilot palette:
-```typescript
-extend: {
-  colors: {
-    brand: {
-      green: "#008A4B",
-      blue: "#005B9F",
-    },
-    surface: {
-      base: "#0F1117",
-      card: "#1A1D27",
-      border: "#2A2D3A",
-    },
-    content: {
-      primary: "#F0F0F0",
-      secondary: "#8B8FA8",
-    },
-  },
+Agregar en `app/globals.css` con `@theme` (Tailwind v4):
+```css
+@theme {
+  --color-brand-green:        #008A4B;
+  --color-brand-blue:         #005B9F;
+  --color-surface-base:       #F4F6FA;
+  --color-surface-card:       #FFFFFF;
+  --color-surface-border:     #DDE1EC;
+  --color-content-primary:    #1A1D2E;
+  --color-content-secondary:  #6B7080;
+  --color-alert-red:          #DC2626;
+  --color-alert-yellow:       #D97706;
+}
+
+body {
+  background-color: #F4F6FA;
+  color: #1A1D2E;
 }
 ```
-
-Set `app/globals.css` background to `#0F1117`.
 
 **Acceptance criteria:**
 - `pnpm dev` starts at `http://localhost:3000` without errors
