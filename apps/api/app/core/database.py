@@ -1,6 +1,10 @@
+import logging
+
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 engine = create_async_engine(
     settings.database_url,
@@ -21,19 +25,23 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    async with engine.begin() as conn:
-        await conn.run_sync(lambda conn: None)
+    """Initializes database connections by verifying connectivity."""
+    async with engine.begin() as connection:
+        await connection.run_sync(lambda connection: None)
 
 
 async def get_db():
+    """Provides an active async database session. Yields an AsyncSession and handles commit/rollback."""
     async with AsyncSessionLocal() as session:
         try:
             yield session
             await session.commit()
         except Exception:
+            logger.error("Database session error, rolling back", exc_info=True)
             await session.rollback()
             raise
 
 
 async def dispose_db():
+    """Closes all database connections to prevent connection leaks."""
     await engine.dispose()
