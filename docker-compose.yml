@@ -29,7 +29,6 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/db_init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -50,8 +49,8 @@ services:
 
   api:
     build:
-      context: ./apps/api
-      dockerfile: Dockerfile.dev
+      context: .
+      dockerfile: apps/api/Dockerfile.dev
     container_name: saludcopilot_api
     restart: unless-stopped
     env_file: .env
@@ -61,8 +60,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./apps/api:/app
-      - ./packages:/packages
+      - ./apps/api:/app:z
+      - ./packages:/packages:z
     depends_on:
       postgres:
         condition: service_healthy
