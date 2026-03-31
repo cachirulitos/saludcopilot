@@ -59,7 +59,20 @@ class CVSettings(BaseSettings):
 
     # Maps camera index to clinical_area UUID in the database
     # Set via env var as JSON string: '{"0": "uuid-of-area"}'
+    # Region of Interest per camera: "x1,y1,x2,y2" pixel coordinates
+    # Only people whose bounding box center falls inside this rectangle are counted
+    # Leave empty to count entire frame
     camera_to_area_mapping: str = "{}"
+    camera_roi_0: str = ""
+
+    @property
+    def roi_for_camera(self) -> dict[int, tuple | None]:
+        """Returns {camera_index: (x1,y1,x2,y2)} or None if no ROI configured."""
+        result = {}
+        if self.camera_roi_0:
+            coords = tuple(int(x) for x in self.camera_roi_0.split(","))
+            result[0] = coords
+        return result
 
     class Config:
         env_file = ".env"
@@ -93,13 +106,32 @@ class PeopleDetector:
         yolov8n.pt downloads automatically on first run (~6MB).
         """
 
-    def count_people_in_frame(self, frame: np.ndarray) -> int:
-        """
-        Run inference on a single BGR frame (OpenCV format).
-        Returns count of detections where class=0 (person)
-        and confidence >= threshold.
-        Does not modify the frame.
-        """
+    def count_people_in_frame(
+        self,
+        frame: np.ndarray,
+        roi: tuple | None = None,  # (x1, y1, x2, y2) or None = full frame
+    ) -> int:
+    """
+    Count people in frame, optionally restricted to a Region of Interest.
+    roi: pixel coordinates (x1, y1, x2, y2) defining the counting zone.
+         People outside this zone are ignored.
+         If None, counts people in the entire frame.
+    """
+    results = self.model(frame, verbose=False)
+    count = 0
+    for box in results[0].boxes:
+        if int(box.cls) != self.target_class_id:
+            continue
+        if float(box.conf) < self.confidence_threshold:
+            continue
+        if roi is not None:
+            x_center = float((box.xyxy[0][0] + box.xyxy[0][2]) / 2)
+            y_center = float((box.xyxy[0][1] + box.xyxy[0][3]) / 2)
+            x1, y1, x2, y2 = roi
+            if not (x1 <= x_center <= x2 and y1 <= y_center <= y2):
+                continue
+        count += 1
+    return count
 
     def count_people_with_annotated_frame(
         self, frame: np.ndarray

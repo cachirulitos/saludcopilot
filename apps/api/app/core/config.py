@@ -11,10 +11,12 @@ class Settings(BaseSettings):
     whatsapp_phone_id: str = ""
     whatsapp_verify_token: str = "saludcopilot_verify"
     anthropic_api_key: str = ""
+    cors_allowed_origins: str = "http://localhost:3000"
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
 
 
 settings = Settings()

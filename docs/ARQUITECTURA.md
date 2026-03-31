@@ -46,11 +46,20 @@ Staff marks patient as called (or system auto-advances)
 
 ```
 Camera captures frame every N seconds
-  → YOLOv8 counts people in waiting area
+  → YOLOv8 detects people in full frame
+  → CV worker filters: only counts people whose center is inside
+    configured ROI (Region of Interest) for that camera
+    ROI defined in .env as CAMERA_ROI_0=x1,y1,x2,y2
+    Eliminates counting people from adjacent areas sharing the same camera
   → POST /api/v1/areas/{area_id}/occupancy {count, timestamp}
-  → API triggers ML prediction update
-  → ML recalculates wait time for that area
-  → If estimate changed: trigger bot update + dashboard WebSocket push
+  → API stores count in Redis: occupancy:{area_id} TTL 30s
+  → API calls ML model with people_count as real-time feature:
+    model.predict(hour_of_day, day_of_week, study_type,
+                  clinic_id, capacity, people_count, has_appointment)
+    people_count from CV = live signal that adjusts the historical baseline
+  → API upserts WaitTimeEstimate in PostgreSQL
+  → WebSocket broadcast to dashboard: wait_time_updated
+  → If delta > 5 min vs previous estimate: trigger bot notification
 ```
 
 ### Flow 4 — Patient sends WhatsApp message
@@ -337,8 +346,25 @@ Source: Excel → Promedios de Espera → Promedio column
 | study_type_id | idEstudio | Label encoded |
 | clinic_id | idSucursal | Label encoded |
 | simultaneous_capacity | Excel: CantidadConsultorios | Area capacity |
-| current_queue_length | Redis at inference time | Live signal |
+| current_queue_length | CV worker via Redis at inference time | People counted inside area ROI right now. Adjusts historical baseline to present reality. CV and check-in are independent — CV counts anonymous people, check-in knows who they are. |
 | has_appointment | idReservacion not null | Appointment vs walk-in |
+
+## CV and check-in independence
+
+CV worker and check-in system are deliberately independent.
+
+CV: counts how many anonymous people are in each area ROI.
+    Does not know who they are or what studies they have.
+
+Check-in: knows exactly which patient has which studies in which order.
+          Does not use camera data.
+
+They connect only through the ML model at inference time:
+CV provides people_count → model uses it as one feature among several.
+
+This design avoids biometric data concerns (no individual tracking),
+works with existing cameras (no new hardware),
+and degrades gracefully if CV fails (model falls back to historical baseline).
 
 **Served via:** `GET /api/v1/areas/{area_id}/wait-time-estimate`
 

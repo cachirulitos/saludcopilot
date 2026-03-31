@@ -96,6 +96,9 @@ MANDATORY_ORDER_RULES: list[tuple[Study, Study]] = [
 ]
 
 
+MINIMUM_AGE_MASTOGRAPHY = 35
+INTERVAL_MONTHS_MASTOGRAPHY = 6
+
 # ── Función Principal ─────────────────────────────────────────────────────────
 
 def calculate_sequence(studies: list[Study]) -> list[Study]:
@@ -131,20 +134,20 @@ def calculate_sequence(studies: list[Study]) -> list[Study]:
         return list(studies)
 
     # Paso 1: Separar estudios sin preparación (van primero siempre)
-    no_prep = [s for s in studies if s in STUDIES_NO_PREPARATION]
-    with_prep = [s for s in studies if s not in STUDIES_NO_PREPARATION]
-    other = [s for s in studies if s not in STUDIES_NO_PREPARATION and s not in STUDIES_REQUIRING_PREPARATION]
+    without_preparation = [study for study in studies if study in STUDIES_NO_PREPARATION]
+    with_preparation = [study for study in studies if study not in STUDIES_NO_PREPARATION]
+    other = [study for study in studies if study not in STUDIES_NO_PREPARATION and study not in STUDIES_REQUIRING_PREPARATION]
 
     # Combinar: sin preparación → con preparación → el resto
-    working_order = no_prep + other + with_prep
+    working_order = without_preparation + other + with_preparation
 
     # Eliminar duplicados manteniendo el orden (por si acaso)
     seen = set()
     working_order_dedup = []
-    for s in working_order:
-        if s not in seen:
-            seen.add(s)
-            working_order_dedup.append(s)
+    for study in working_order:
+        if study not in seen:
+            seen.add(study)
+            working_order_dedup.append(study)
 
     # Paso 2: Aplicar reglas de orden obligatorio
     # Usamos bubble sort conceptual: si (A, B) es regla y B está antes que A, los intercambiamos
@@ -159,11 +162,11 @@ def calculate_sequence(studies: list[Study]) -> list[Study]:
             if first not in study_set or second not in study_set:
                 continue  # La regla no aplica si alguno de los estudios no está presente
             if first in result and second in result:
-                idx_first = result.index(first)
-                idx_second = result.index(second)
-                if idx_first > idx_second:
+                index_first = result.index(first)
+                index_second = result.index(second)
+                if index_first > index_second:
                     # Violación de la regla: intercambiar
-                    result[idx_first], result[idx_second] = result[idx_second], result[idx_first]
+                    result[index_first], result[index_second] = result[index_second], result[index_first]
                     changed = True
 
     return result
@@ -215,9 +218,9 @@ def requires_medical_order(study: Study, patient_age: int | None = None,
         (requires_order, reason): tupla de (booleano, mensaje explicativo si aplica)
     """
     if study == Study.MASTOGRAFIA:
-        if patient_age is not None and patient_age < 35:
+        if patient_age is not None and patient_age < MINIMUM_AGE_MASTOGRAPHY:
             return True, "Pacientes menores de 35 años requieren orden médica de especialista para mastografía."
-        if months_since_last is not None and months_since_last < 6:
+        if months_since_last is not None and months_since_last < INTERVAL_MONTHS_MASTOGRAPHY:
             return True, "Se requiere orden médica si la última mastografía fue hace menos de 6 meses."
 
     return False, None

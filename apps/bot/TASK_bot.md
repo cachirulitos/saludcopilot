@@ -72,6 +72,49 @@ async def verify_webhook(
 
 ---
 
+## Task 1b — Navigation instructions per area
+
+Each clinical area has a text description of how to reach it from
+the clinic entrance. The bot includes this in the welcome message
+so the patient knows exactly where to go — not just what study is next.
+
+**Database change required (coordinate with Dev 1):**
+Add column to clinical_areas table:
+  navigation_instructions: TEXT nullable
+
+Example values for seed data:
+- Laboratorio: "Al entrar a la clínica, sigue recto al fondo y dobla
+  a la izquierda. Busca el letrero azul que dice 'Toma de Muestras'."
+- Ultrasonido: "Sube al segundo piso por las escaleras centrales.
+  Ultrasonido está al fondo del pasillo, puerta 12."
+- Rayos X: "En la planta baja, dobla a la derecha al entrar.
+  Rayos X está frente a ti, letrero verde."
+
+**Changes to send_welcome_message():**
+Include navigation_instructions in the sequence message:
+
+Current format:
+"1. Laboratorio — ~15 min de espera"
+
+New format:
+"1. Laboratorio — ~15 min de espera
+   📍 Cómo llegar: Al entrar sigue recto y dobla a la izquierda."
+
+If navigation_instructions is null for an area: omit the 📍 line
+for that area. Do not show "null" or an empty line.
+
+**Roadmap — Fase 2 (do not implement now):**
+The dashboard will allow clinic managers to upload a floor plan image
+per area. When available, the bot sends the image instead of the text
+instructions. The architecture already supports sending images via
+WhatsApp Cloud API — only the trigger and storage need to be added.
+
+**Acceptance criteria:**
+- Welcome message includes navigation text when area has instructions
+- Areas without instructions show only name and wait time
+- scripts/seed.py includes navigation_instructions for all 7 demo areas
+- No visible change for walk-in patients without appointment
+
 ## Task 2 — Redis session management
 
 Create `apps/bot/services/session_service.py`.

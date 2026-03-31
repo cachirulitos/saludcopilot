@@ -5,5 +5,5 @@ from app.core.database import get_db
 router = APIRouter()
 
 @router.get("/")
-async def list_pacientes(db: AsyncSession = Depends(get_db)):
-    return {"status": "not implemented", "resource": "pacientes"}
+async def list_visits(db: AsyncSession = Depends(get_db)):
+    return {"status": "not implemented", "resource": "visits"}

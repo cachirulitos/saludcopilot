@@ -459,3 +459,7 @@ Add `NEXT_PUBLIC_CLINIC_ID` to `.env.example`.
 - Multi-clinic view
 - Export to PDF or CSV
 - Mobile responsive layout
+- Map/croquis upload per area (Fase 2: manager uploads floor plan image,
+  system sends it via WhatsApp instead of text navigation instructions)
+- Navigation instructions editor in dashboard UI (Fase 2: visual form
+  for managers to set navigation_instructions per area)

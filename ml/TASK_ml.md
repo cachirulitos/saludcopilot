@@ -115,7 +115,10 @@ def build_training_features(
     - study_type_id: int — label encoded from idEstudio
     - clinic_id: int — label encoded from idSucursal
     - simultaneous_capacity: int — from consultorios joined on idSucursal+idEstudio
-    - current_queue_length: int — approximated from ventas as concurrent visits
+    - current_queue_length: int — at training time: approximated from ventas
+      as concurrent visits in same clinic+study+time window.
+      At inference time: real people_count from CV worker via Redis.
+      This is the feature that connects historical training with live reality.
     - has_appointment: int (0 or 1) — 1 if idReservacion not null/empty
 
     Target column:
