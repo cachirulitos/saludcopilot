@@ -49,6 +49,15 @@ def _open_camera() -> cv2.VideoCapture:
     return capture
 
 
+def _open_video(video_path: str) -> cv2.VideoCapture:
+    """Open a video file as the frame source, or exit with an error message."""
+    capture = cv2.VideoCapture(video_path)
+    if not capture.isOpened():
+        print(f"Error: no se pudo abrir el video '{video_path}'.")
+        sys.exit(1)
+    return capture
+
+
 def _publish_in_background(area_id: str, people_count: int) -> None:
     """Run the async publish call in a separate event loop on a background thread."""
     try:
@@ -57,11 +66,21 @@ def _publish_in_background(area_id: str, people_count: int) -> None:
         print(f"Error publicando conteo: {exc}")
 
 
-def run_loop(demo_mode: bool = False, show_window: bool = True) -> None:
+def run_loop(
+    demo_mode: bool = False,
+    show_window: bool = True,
+    video_path: str = "",
+) -> None:
     """Main capture loop: read frames, count people, publish to API.
 
     Runs synchronously so OpenCV window events are processed correctly.
     HTTP publishing runs in background threads to avoid blocking the UI.
+
+    Args:
+        demo_mode: Use simulated people counts instead of a real video source.
+        show_window: Display a preview window with annotated detections.
+        video_path: Path to a video file to use as frame source. When empty,
+            the configured camera index is used. Ignored in demo_mode.
     """
     area_mapping = settings.area_mapping
     if not area_mapping:
@@ -76,9 +95,15 @@ def run_loop(demo_mode: bool = False, show_window: bool = True) -> None:
     demo_index = 0
 
     if not demo_mode:
-        capture = _open_camera()
+        if video_path:
+            capture = _open_video(video_path)
+            mode_label = f"VIDEO: {video_path}"
+        else:
+            capture = _open_camera()
+            mode_label = "CAMARA REAL"
+    else:
+        mode_label = "DEMO"
 
-    mode_label = "DEMO" if demo_mode else "CAMARA REAL"
     print(f"SaludCopilot CV Worker iniciado. Modo: {mode_label}")
     if show_window:
         print("Presiona 'q' en la ventana para salir.")
@@ -96,6 +121,10 @@ def run_loop(demo_mode: bool = False, show_window: bool = True) -> None:
             else:
                 frame_captured, raw_frame = capture.read()
                 if not frame_captured:
+                    if video_path:
+                        # Loop video back to the beginning
+                        capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        continue
                     print("Advertencia: frame no capturado, reintentando...")
                     time.sleep(0.1)
                     continue
@@ -142,5 +171,10 @@ if __name__ == "__main__":
         "--no-window", action="store_true",
         help="No mostrar ventana de preview (util en Wayland/headless)",
     )
+    parser.add_argument(
+        "--video", metavar="PATH", default="",
+        help="Ruta a un archivo de video (mp4, avi, etc.) como fuente de frames. "
+             "Si no se indica, usa la camara configurada en CAMERA_INDEX.",
+    )
     args = parser.parse_args()
-    run_loop(demo_mode=args.demo, show_window=not args.no_window)
+    run_loop(demo_mode=args.demo, show_window=not args.no_window, video_path=args.video)
