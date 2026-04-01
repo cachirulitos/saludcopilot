@@ -19,8 +19,17 @@ class CVSettings(BaseSettings):
     capture_interval_seconds: int = 5
     yolo_model_name: str = "yolov8n.pt"
     confidence_threshold: float = 0.4
-    smoothing_window_size: int = 15
+    # ROI as "x1,y1,x2,y2" in pixels — empty string means full frame
+    camera_roi: str = ""
     camera_to_area_mapping: str = "{}"
+
+    @property
+    def roi_rect(self) -> tuple[int, int, int, int] | None:
+        """Parse CAMERA_ROI into a (x1, y1, x2, y2) tuple, or None if unset."""
+        if not self.camera_roi.strip():
+            return None
+        x1, y1, x2, y2 = (int(v) for v in self.camera_roi.split(","))
+        return (x1, y1, x2, y2)
 
     @property
     def area_mapping(self) -> dict:

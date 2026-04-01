@@ -1,32 +1,41 @@
 "use client";
+
 import { useDashboardData } from "@/lib/hooks/useDashboardData";
+import { useDashboardContext } from "@/lib/context/dashboard-context";
 import { MetricCard } from "@/components/ui/MetricCard";
 import { AreaTable } from "@/components/ui/AreaTable";
 import WaitTimeChart from "@/components/ui/WaitTimeChart";
 import AlertsPanel from "@/components/ui/AlertsPanel";
+import { ActiveVisitsTable } from "@/components/ui/ActiveVisitsTable";
 import { Alert } from "@/components/ui/AlertsPanel";
 
 export default function DashboardPage() {
+  const { setIsConnected, setAlertCount } = useDashboardContext();
+
   const {
     areas,
     activeVisits,
     summary,
     alerts,
-    isConnected,
     waitTimeHistory,
     clearResolvedAlerts,
-  } = useDashboardData(process.env.NEXT_PUBLIC_CLINIC_ID ?? "default");
+  } = useDashboardData(
+    process.env.NEXT_PUBLIC_CLINIC_ID ?? "default",
+    setIsConnected,
+    setAlertCount,
+  );
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
+      {/* ── KPI row ──────────────────────────────────────────────────── */}
       <div className="grid grid-cols-4 gap-4">
         <MetricCard
-          label="Pacientes activos"
+          label="Personas en clínica"
           value={summary.total_active_visits}
           accentColor="#008A4B"
         />
         <MetricCard
-          label="En espera"
+          label="En cola total"
           value={summary.total_waiting_patients}
           accentColor="#005B9F"
         />
@@ -43,6 +52,7 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* ── Chart + Alerts row ───────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 bg-[var(--color-surface-card)] rounded-lg p-4 border border-[var(--color-surface-border)] shadow-sm">
           <h2 className="text-[var(--color-content-secondary)] text-sm mb-4 font-medium">
@@ -56,32 +66,11 @@ export default function DashboardPage() {
         />
       </div>
 
+      {/* ── Areas status table ───────────────────────────────────────── */}
       <AreaTable areas={areas} />
 
-      {/* Active visits fallback for UI completion per Task 9 instructions, although not explicitly mapped in UI components yet */}
-      <div className="bg-[var(--color-surface-card)] rounded-lg p-6 border border-[var(--color-surface-border)] shadow-sm">
-        <h2 className="text-[var(--color-content-primary)] font-semibold mb-4">
-          Pacientes Activos Recientes
-        </h2>
-        <div className="text-sm text-[var(--color-content-secondary)]">
-          {activeVisits.slice(0, 3).map((v) => (
-            <div
-              key={v.visit_id}
-              className="py-2 border-b last:border-0 border-[var(--color-surface-border)] flex justify-between">
-              <span>
-                <strong className="text-[var(--color-content-primary)]">
-                  {v.patient_name}
-                </strong>{" "}
-                — {v.current_area}
-              </span>
-              <span>
-                Paso {v.step_order} de {v.total_steps} (
-                {v.waiting_since_minutes} min espera)
-              </span>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* ── Active patient flow table ────────────────────────────────── */}
+      <ActiveVisitsTable visits={activeVisits} />
     </div>
   );
 }

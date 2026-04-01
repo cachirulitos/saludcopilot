@@ -16,10 +16,10 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", Icon: LayoutDashboard },
-  { href: "/areas",     label: "Áreas",     Icon: MapPin },
-  { href: "/alertas",   label: "Alertas",   Icon: Bell },
-  { href: "/historial", label: "Historial", Icon: Clock },
+  { href: "/dashboard",          label: "Dashboard", Icon: LayoutDashboard },
+  { href: "/dashboard/areas",    label: "Áreas",     Icon: MapPin },
+  { href: "/dashboard/alertas",  label: "Alertas",   Icon: Bell },
+  { href: "/dashboard/historial",label: "Historial", Icon: Clock },
 ];
 
 export default function Sidebar({
