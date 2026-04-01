@@ -69,6 +69,20 @@ class OccupancyResponse(BaseModel):
     wait_time_estimate_minutes: int
 
 
+class AdvanceStepStepResponse(BaseModel):
+    order: int
+    area_name: str
+    status: str
+    actual_wait_minutes: Optional[int] = None
+
+
+class AdvanceStepResponse(BaseModel):
+    visit_id: uuid.UUID
+    visit_status: str
+    completed_step: AdvanceStepStepResponse
+    next_step: Optional[AdvanceStepStepResponse] = None
+
+
 class WaitTimeEstimateResponse(BaseModel):
     area_id: uuid.UUID
     estimated_wait_minutes: int

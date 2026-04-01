@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timezone
 
 import redis.asyncio as redis
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.models import ClinicalArea, WaitTimeEstimate
-from app.schemas.schemas import OccupancyUpdateRequest, OccupancyResponse
+from app.routers.dashboard import broadcast_to_clinic
+from app.schemas.schemas import (
+    OccupancyUpdateRequest,
+    OccupancyResponse,
+    WaitTimeEstimateResponse,
+)
 
 router = APIRouter()
 
@@ -48,7 +53,7 @@ async def update_occupancy(
     area = result.scalar_one_or_none()
     if area is None:
         return JSONResponse(
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             content={"error": "Area not found", "code": "AREA_NOT_FOUND"},
         )
 
@@ -90,10 +95,89 @@ async def update_occupancy(
 
     await db.commit()
 
-    # 6. Return response
+    # 6. Broadcast to dashboard
+    await broadcast_to_clinic(
+        str(area.clinic_id),
+        {
+            "event": "wait_time_updated",
+            "data": {
+                "estimated_minutes": estimated_minutes,
+                "people_count": request.people_count,
+            },
+        },
+    )
+
+    # 7. Return response
     return OccupancyResponse(wait_time_estimate_minutes=estimated_minutes)
 
 
+@router.get("/{area_id}/wait-time-estimate", response_model=WaitTimeEstimateResponse)
+async def get_wait_time_estimate(
+    area_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns the current wait time estimate for a clinical area."""
+
+    # 1. Find ClinicalArea
+    result = await db.execute(
+        select(ClinicalArea).where(ClinicalArea.id == area_id)
+    )
+    area = result.scalar_one_or_none()
+    if area is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"error": "Area not found", "code": "AREA_NOT_FOUND"},
+        )
+
+    # 2. Find WaitTimeEstimate
+    result = await db.execute(
+        select(WaitTimeEstimate).where(
+            WaitTimeEstimate.clinical_area_id == area_id
+        )
+    )
+    wait_estimate = result.scalar_one_or_none()
+
+    # 3. Get queue length from Redis
+    queue_length = await redis_client.zcard(f"queue:{area_id}")
+
+    if wait_estimate is None:
+        return WaitTimeEstimateResponse(
+            area_id=area_id,
+            estimated_wait_minutes=DEFAULT_BASE_WAIT_MINUTES,
+            current_queue_length=queue_length,
+            people_in_area=0,
+            updated_at=datetime.now(timezone.utc),
+        )
+
+    return WaitTimeEstimateResponse(
+        area_id=area_id,
+        estimated_wait_minutes=wait_estimate.estimated_minutes,
+        current_queue_length=queue_length,
+        people_in_area=wait_estimate.people_in_area,
+        updated_at=wait_estimate.updated_at,
+    )
+
+
 @router.get("/")
-async def list_areas(db: AsyncSession = Depends(get_db)):
-    return {"status": "not implemented", "resource": "areas"}
+async def list_areas(
+    clinic_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns all active clinical areas for a clinic."""
+
+    result = await db.execute(
+        select(ClinicalArea).where(
+            ClinicalArea.clinic_id == clinic_id,
+            ClinicalArea.active == True,
+        )
+    )
+    areas = result.scalars().all()
+
+    return [
+        {
+            "id": area.id,
+            "name": area.name,
+            "study_type": area.study_type,
+        }
+        for area in areas
+    ]
