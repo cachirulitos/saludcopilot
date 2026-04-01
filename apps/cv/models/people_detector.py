@@ -9,8 +9,20 @@ class PeopleDetector:
 
     def __init__(self, model_name: str, confidence_threshold: float) -> None:
         from ultralytics import YOLO
+        import torch
 
-        self.model = YOLO(model_name)
+        # Handle PyTorch 2.6+ default weights_only=True which breaks YOLO model loading
+        original_load = torch.load
+        def custom_load(*args, **kwargs):
+            kwargs["weights_only"] = False
+            return original_load(*args, **kwargs)
+
+        torch.load = custom_load
+        try:
+            self.model = YOLO(model_name)
+        finally:
+            torch.load = original_load
+
         self.confidence_threshold = confidence_threshold
 
     def count_people_in_frame(self, frame: np.ndarray) -> int:

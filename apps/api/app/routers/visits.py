@@ -82,13 +82,13 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
 
     # ── Step 1: find or create patient ───────────────────────────────────
     result = await db.execute(
-        select(Patient).where(Patient.phone_number == phone_number)
+        select(Patient).where(Patient.phone_number == request.phone_number)
     )
     patient = result.scalar_one_or_none()
     if patient is None:
         patient = Patient(
-            phone_number=phone_number,
-            full_name=DEFAULT_PATIENT_NAME_PREFIX + phone_number[-4:],
+            phone_number=request.phone_number,
+            full_name=DEFAULT_PATIENT_NAME_PREFIX + request.phone_number[-4:],
         )
         db.add(patient)
         await db.flush()  # assigns patient.id before FK use
@@ -367,3 +367,49 @@ async def advance_step(
         completed_step=completed_step_response,
         next_step=next_step_response,
     )
+
+
+# ── Helper Functions ────────────────────────────────────────────────────────
+
+async def _enqueue_first_area(visit_id: uuid.UUID, area_id: str) -> None:
+    timestamp = datetime.now(timezone.utc).timestamp()
+    await redis_client.zadd(f"queue:{area_id}", {str(visit_id): timestamp})
+
+async def _load_area_by_id(area_id: uuid.UUID, db: AsyncSession) -> ClinicalArea:
+    result = await db.execute(select(ClinicalArea).where(ClinicalArea.id == area_id))
+    return result.scalar_one()
+
+async def _find_visit_step_by_status(visit_id: uuid.UUID, status: VisitStepStatus, db: AsyncSession) -> VisitStep | None:
+    result = await db.execute(
+        select(VisitStep)
+        .where(VisitStep.visit_id == visit_id, VisitStep.status == status)
+        .order_by(VisitStep.step_order)
+    )
+    return result.scalars().first()
+
+async def _complete_current_step(step: VisitStep) -> int:
+    step.status = VisitStepStatus.COMPLETED
+    step.completed_at = datetime.now(timezone.utc)
+    if step.started_at:
+        actual_wait = (step.completed_at - step.started_at).total_seconds() / 60.0
+        step.actual_wait_minutes = int(actual_wait)
+    else:
+        step.actual_wait_minutes = 0
+    return step.actual_wait_minutes
+
+async def _start_next_step(next_step: VisitStep, current_area_id: uuid.UUID, visit_id: uuid.UUID) -> None:
+    next_step.status = VisitStepStatus.IN_PROGRESS
+    next_step.started_at = datetime.now(timezone.utc)
+    timestamp = datetime.now(timezone.utc).timestamp()
+    await redis_client.zrem(f"queue:{current_area_id}", str(visit_id))
+    await redis_client.zadd(f"queue:{next_step.clinical_area_id}", {str(visit_id): timestamp})
+
+async def _finish_visit(visit: Visit, current_area_id: uuid.UUID, db: AsyncSession) -> None:
+    visit.status = VisitStatus.COMPLETED
+    visit.completed_at = datetime.now(timezone.utc)
+    await redis_client.zrem(f"queue:{current_area_id}", str(visit.id))
+    db.add(PatientEvent(
+        visit_id=visit.id,
+        event_type="visit_completed",
+        event_metadata={}
+    ))
