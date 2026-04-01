@@ -1,5 +1,11 @@
+import os
+from pathlib import Path
 from pydantic_settings import BaseSettings
 
+# Ruta dinámica al .env de la raíz (Salud Copilot)
+# config.py está en: apps/api/app/core/config.py (5 niveles)
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
+ENV_FILE_PATH = ROOT_DIR / ".env"
 
 class Settings(BaseSettings):
     database_url: str
@@ -16,7 +22,7 @@ class Settings(BaseSettings):
     internal_bot_token: str = "saludcopilot-internal-token-change-in-prod"
 
     class Config:
-        env_file = ".env"
+        env_file = str(ENV_FILE_PATH)
         case_sensitive = False
         extra = "ignore"
 

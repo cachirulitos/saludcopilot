@@ -36,6 +36,7 @@ Schema source of truth: ARQUITECTURA.md → Database schema section.
 `Notification`, `ClinicalRule`, `WaitTimeEstimate`, `PatientEvent`
 
 **Requirements:**
+
 - All models inherit from `Base` (from `app/core/database.py`)
 - Use SQLAlchemy 2.0 style: `Mapped` and `mapped_column` — not legacy `Column`
 - All primary keys are UUID with `default=uuid.uuid4`
@@ -46,6 +47,7 @@ Schema source of truth: ARQUITECTURA.md → Database schema section.
 - All FK columns have their corresponding `relationship()` on both sides
 
 **Acceptance criteria:**
+
 ```bash
 python -c "from app.models.models import Patient, Visit, VisitStep, ClinicalArea; print('OK')"
 # Must print OK with zero import errors
@@ -56,6 +58,7 @@ python -c "from app.models.models import Patient, Visit, VisitStep, ClinicalArea
 ## Task 2 — Alembic initial migration
 
 Run after Task 1 is verified:
+
 ```bash
 cd apps/api
 alembic revision --autogenerate -m "initial_schema"
@@ -63,6 +66,7 @@ alembic upgrade head
 ```
 
 **Acceptance criteria:**
+
 - `alembic upgrade head` exits 0
 - All 9 tables exist in PostgreSQL
 - `alembic downgrade -1` exits 0 and removes all tables cleanly
@@ -76,6 +80,7 @@ Implement `POST /api/v1/visits/check-in` in `app/routers/visits.py`.
 **Contract:** ARQUITECTURA.md → "Bot → API (check-in)"
 
 **Step-by-step logic:**
+
 1. Look up `Patient` by `phone_number`. Create if not found.
 2. Create `Visit` with `status=pending`.
 3. Resolve `study_ids` to `ClinicalArea` records. Return 404 if any not found.
@@ -86,6 +91,7 @@ Implement `POST /api/v1/visits/check-in` in `app/routers/visits.py`.
 8. Return 201 with full sequence and `total_estimated_minutes`.
 
 **Rules engine import:**
+
 ```python
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../../../packages"))
@@ -93,6 +99,7 @@ from rules_engine.src.engine import calculate_sequence, Study
 ```
 
 **Study fields the engine expects:**
+
 - `id: str`
 - `type: str` — must match `clinical_areas.study_type`
 - `requires_fasting: bool`
@@ -100,6 +107,7 @@ from rules_engine.src.engine import calculate_sequence, Study
 - `has_appointment: bool`
 
 **Acceptance criteria:**
+
 - Returns 201 with correct sequence for valid payload
 - Creates new patient if phone number is new
 - Reuses existing patient if phone number already exists
@@ -117,12 +125,14 @@ Implement `GET /api/v1/visits/{visit_id}/context` in `app/routers/visits.py`.
 **Contract:** ARQUITECTURA.md → "Bot → API (visit context)"
 
 **Logic:**
+
 1. Fetch `Visit` + all `VisitStep` records + `Patient` from DB.
 2. Current step = first step where `status != completed`.
 3. Fetch `WaitTimeEstimate` for current step's `clinical_area_id`.
 4. Build and return response.
 
 **Acceptance criteria:**
+
 - Returns 200 with correct structure for existing visit
 - Returns 404 with `{"error": "Visit not found", "code": "VISIT_NOT_FOUND"}` for unknown id
 - `estimated_wait_minutes` comes from `WaitTimeEstimate` table, not hardcoded
@@ -136,6 +146,7 @@ Implement `POST /api/v1/areas/{area_id}/occupancy` in `app/routers/areas.py`.
 **Contract:** ARQUITECTURA.md → "CV Worker → API (occupancy)"
 
 **Logic:**
+
 1. Validate area exists. Return 404 if not.
 2. Store in Redis: `occupancy:{area_id}` = `people_count`, TTL 30 seconds.
 3. Calculate updated wait time estimate using placeholder formula:
@@ -145,6 +156,7 @@ Implement `POST /api/v1/areas/{area_id}/occupancy` in `app/routers/areas.py`.
 5. Return `{"wait_time_estimate_minutes": int}`.
 
 **Acceptance criteria:**
+
 - Returns 200 with estimate
 - Redis key `occupancy:{area_id}` is set with 30s TTL
 - `WaitTimeEstimate` row is created or updated in PostgreSQL
@@ -157,6 +169,7 @@ Implement `POST /api/v1/areas/{area_id}/occupancy` in `app/routers/areas.py`.
 Implement `POST /api/v1/visits/{visit_id}/advance-step` in `app/routers/visits.py`.
 
 **Logic:**
+
 1. Find the current step: first step with `status=in_progress`,
    or first step with `status=pending` if none are in progress.
 2. Mark it `completed`. Set `completed_at=now()`. Calculate `actual_wait_minutes`.
@@ -170,6 +183,7 @@ Implement `POST /api/v1/visits/{visit_id}/advance-step` in `app/routers/visits.p
 9. Call internal bot notification (implement as a simple `httpx.post` to bot service).
 
 **Acceptance criteria:**
+
 - Step statuses transition correctly in DB
 - Redis queues updated: removed from old area, added to new area
 - `PatientEvent` created for each transition
@@ -183,12 +197,14 @@ Implement `POST /api/v1/visits/{visit_id}/advance-step` in `app/routers/visits.p
 Implement `GET /api/v1/areas/{area_id}/wait-time-estimate` in `app/routers/areas.py`.
 
 **Logic:**
+
 1. Validate area exists.
 2. Get current `WaitTimeEstimate` from PostgreSQL.
 3. Get current queue length from Redis: `ZCARD queue:{area_id}`.
 4. Return estimate with queue context.
 
 **Response:**
+
 ```json
 {
   "area_id": "uuid",
@@ -200,6 +216,7 @@ Implement `GET /api/v1/areas/{area_id}/wait-time-estimate` in `app/routers/areas
 ```
 
 **Acceptance criteria:**
+
 - Returns current estimate from DB
 - `current_queue_length` comes from Redis, not DB
 - Returns 404 for unknown area
