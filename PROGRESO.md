@@ -2,9 +2,10 @@
 
 ## Estado actual
 - **Branch:** `feature/mis-cambios`
-- **Ultimo commit:** `feat: implement occupancy endpoint and fix Docker/Alembic config`
-- **Ultimo paso completado:** PASO 25 (ML: Training, serialización e inferencia)
-- **Siguiente paso:** PASO 26 (Dashboard: Inicialización y layout)
+- **Ultimo commit:** `feat: implement PASOs 10-25 — API endpoints, WhatsApp bot, CV worker, and ML pipeline`
+- **Ultimo paso completado:** PASO 26 (Dashboard: Inicialización y layout) — ya existía
+- **Siguiente paso:** PASO 27 (Dashboard: Mock data, MetricCard y AreaTable)
+- **CV Worker:** Funcional con cámara real, ventana redimensionable (`QT_QPA_PLATFORM=xcb python main.py`)
 
 ---
 

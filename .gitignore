@@ -23,7 +23,9 @@ build/
 ml/data/*.csv
 ml/data/*.parquet
 ml/models/*.pkl
+ml/artifacts/*.pkl
 *.model
+*.pt
 
 # Jupyter
 .ipynb_checkpoints/
