@@ -39,10 +39,10 @@ from app.schemas.schemas import (
     VisitContextStepResponse,
 )
 
-engine_routes = Path("/packages")
-sys.path.append(str(engine_routes))
+from app.core.config import ROOT_DIR
+sys.path.append(str(ROOT_DIR))
 
-from rules_engine.src.rules_engine.engine import Study, calculate_sequence
+from packages.rules_engine.src.rules_engine.engine import Study, calculate_sequence
 
 router = APIRouter()
 

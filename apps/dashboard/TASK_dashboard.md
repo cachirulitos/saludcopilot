@@ -11,13 +11,13 @@
 - [x] Project scaffold created
 - [x] Next.js initialized with Tailwind v4 (light theme)
 - [x] Layout: sidebar + top bar
-- [ ] Mock data layer
-- [ ] Metric cards (top row)
-- [ ] Area status table
-- [ ] Wait time line chart
-- [ ] Alerts panel
-- [ ] WebSocket client and hook
-- [ ] Wire live data to all components
+- [x] Mock data layer
+- [x] Metric cards (top row)
+- [x] Area status table
+- [x] Wait time line chart
+- [x] Alerts panel
+- [x] WebSocket client and hook
+- [x] Wire live data to all components
 
 ---
 
