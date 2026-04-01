@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.predictor_client import get_predictor
 from app.models.models import ClinicalArea, WaitTimeEstimate
 from app.routers.dashboard import broadcast_to_clinic
 from app.schemas.schemas import (
@@ -23,6 +24,7 @@ redis_client = redis.from_url(settings.redis_url)
 
 OCCUPANCY_TTL_SECONDS = 30
 
+# Fallback formula used when ML predictor is not available
 BASE_WAIT_TIMES = {
     "laboratorio": 15,
     "ultrasonido": 20,
@@ -65,13 +67,26 @@ async def update_occupancy(
     # 3. Get queue length from Redis
     queue_length = await redis_client.zcard(f"queue:{area_id}")
 
-    # 4. Calculate estimated wait (placeholder until ML integration)
-    base = BASE_WAIT_TIMES.get(area.study_type, DEFAULT_BASE_WAIT_MINUTES)
-    estimated_minutes = (
-        base
-        + (request.people_count * WAIT_MINUTES_PER_PERSON)
-        + (queue_length * WAIT_MINUTES_PER_QUEUED)
-    )
+    # 4. Calculate estimated wait via ML model, fallback to formula if unavailable
+    now = datetime.now()
+    predictor = get_predictor()
+    if predictor is not None:
+        estimated_minutes = predictor.predict_wait_minutes(
+            hour_of_day=now.hour,
+            day_of_week=now.weekday(),
+            study_type_raw_id=area.study_type,
+            clinic_raw_id=str(area.clinic_id),
+            simultaneous_capacity=area.simultaneous_capacity,
+            current_queue_length=queue_length,
+            has_appointment=False,
+        )
+    else:
+        base = BASE_WAIT_TIMES.get(area.study_type, DEFAULT_BASE_WAIT_MINUTES)
+        estimated_minutes = (
+            base
+            + (request.people_count * WAIT_MINUTES_PER_PERSON)
+            + (queue_length * WAIT_MINUTES_PER_QUEUED)
+        )
 
     # 5. Upsert WaitTimeEstimate
     result = await db.execute(

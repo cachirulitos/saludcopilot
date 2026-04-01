@@ -1,79 +1,130 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { DashboardWebSocketClient, DashboardEvent } from '../websocket-client';
-import { 
-  mockAreas, 
-  mockActiveVisits, 
-  mockSummary, 
-  mockAlerts, 
-  mockWaitTimeHistory 
+import {
+  mockAreas,
+  mockActiveVisits,
+  mockAlerts,
+  mockWaitTimeHistory,
 } from '../mock-data';
 
-export function useDashboardData(clinicId: string) {
+const CHART_WINDOW = 12;
+
+export function useDashboardData(
+  clinicId: string,
+  onConnectionChange?: (connected: boolean) => void,
+  onAlertCountChange?: (count: number) => void,
+) {
   const [areas, setAreas] = useState(mockAreas);
   const [activeVisits, setActiveVisits] = useState(mockActiveVisits);
-  const [summary, setSummary] = useState(mockSummary);
   const [alerts, setAlerts] = useState(mockAlerts);
   const [waitTimeHistory, setWaitTimeHistory] = useState(mockWaitTimeHistory);
   const [isConnected, setIsConnected] = useState(false);
-  
+
   const wsClientRef = useRef<DashboardWebSocketClient | null>(null);
+
+  // Derived summary — recomputed whenever areas change
+  const summary = useMemo(() => {
+    const totalWaiting = areas.reduce((s, a) => s + a.current_queue_length, 0);
+    const totalPeople = areas.reduce((s, a) => s + a.people_in_area, 0);
+    const areasAtRisk = areas.filter(
+      (a) => a.status === 'warning' || a.status === 'saturated',
+    ).length;
+    const avgWait =
+      areas.length > 0
+        ? Math.round(
+            areas.reduce((s, a) => s + a.estimated_wait_minutes, 0) /
+              areas.length,
+          )
+        : 0;
+    return {
+      total_active_visits: totalPeople,
+      total_waiting_patients: totalWaiting,
+      average_wait_minutes: avgWait,
+      areas_at_risk: areasAtRisk,
+    };
+  }, [areas]);
+
+  // Propagate alert count upward whenever alerts list changes
+  useEffect(() => {
+    onAlertCountChange?.(alerts.filter((a) => a.severity === 'critical').length);
+  }, [alerts, onAlertCountChange]);
 
   const handleWebSocketEvent = useCallback((event: DashboardEvent) => {
     switch (event.event) {
       case 'wait_time_updated':
-        // data: { estimated_minutes: N, people_count: N }
-        setAreas(prev => prev.map(area => 
-          area.area_id === event.area_id 
-            ? { ...area, 
-                estimated_wait_minutes: event.data.estimated_minutes,
-                people_in_area: event.data.people_count
-              }
-            : area
-        ));
-        // Note: Realistically we'd also update the chart here, but for now 
-        // we'll keep the mock chart data static unless we receive a specific historical update event
+        setAreas((prev) => {
+          const updated = prev.map((area) =>
+            area.area_id === event.area_id
+              ? {
+                  ...area,
+                  estimated_wait_minutes: event.data.estimated_minutes,
+                  people_in_area: event.data.people_count,
+                }
+              : area,
+          );
+
+          // Slide chart window: shift left + append latest value at "ahora"
+          const targetArea = updated.find((a) => a.area_id === event.area_id);
+          if (targetArea) {
+            setWaitTimeHistory((hist) => {
+              const existingSeries = hist.series[targetArea.area_name] ?? Array(CHART_WINDOW).fill(0);
+              const newSeries = [...existingSeries.slice(1), event.data.estimated_minutes];
+              const nowLabel = new Date().toLocaleTimeString('es-MX', {
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              });
+              const newLabels = [...hist.labels.slice(1), nowLabel];
+              return {
+                labels: newLabels,
+                series: { ...hist.series, [targetArea.area_name]: newSeries },
+              };
+            });
+          }
+
+          return updated;
+        });
         break;
-        
+
       case 'queue_changed':
-        // data: { current_queue_length: N, status: 'normal'|'warning'|'saturated' }
-        setAreas(prev => prev.map(area => 
-          area.area_id === event.area_id 
-            ? { ...area, 
-                current_queue_length: event.data.current_queue_length,
-                status: event.data.status || area.status
-              }
-            : area
-        ));
+        setAreas((prev) =>
+          prev.map((area) =>
+            area.area_id === event.area_id
+              ? {
+                  ...area,
+                  current_queue_length: event.data.current_queue_length,
+                  status: event.data.status ?? area.status,
+                }
+              : area,
+          ),
+        );
         break;
-        
-      case 'visit_updated':
-        // Re-fetch visits from API or handle granular update
-        // We'll just patch the specific visit if we have it conceptually
-        break;
-        
-      case 'alert':
+
+      case 'alert': {
         const newAlert = event.data;
-        setAlerts(prev => [newAlert, ...prev].slice(0, 50)); // Keep max 50
+        setAlerts((prev) => [newAlert, ...prev].slice(0, 50));
         break;
+      }
     }
   }, []);
 
-  const handleConnectionStatus = useCallback((status: boolean) => {
-    setIsConnected(status);
-  }, []);
+  const handleConnectionStatus = useCallback(
+    (status: boolean) => {
+      setIsConnected(status);
+      onConnectionChange?.(status);
+    },
+    [onConnectionChange],
+  );
 
   useEffect(() => {
     if (!clinicId) return;
 
     const client = new DashboardWebSocketClient();
     wsClientRef.current = client;
-
     client.connect(clinicId, handleWebSocketEvent, handleConnectionStatus);
 
-    // Fallback: update alerts relative time every minute to trigger re-renders
-    const timer = setInterval(() => {
-      setAlerts(prev => [...prev]);
-    }, 60000);
+    // Re-render alerts every minute to refresh relative timestamps
+    const timer = setInterval(() => setAlerts((prev) => [...prev]), 60_000);
 
     return () => {
       client.disconnect();
@@ -88,7 +139,7 @@ export function useDashboardData(clinicId: string) {
     alerts,
     isConnected,
     waitTimeHistory,
-    // Provide a helper to clear alerts to UI
-    clearResolvedAlerts: () => setAlerts(prev => prev.filter(a => a.severity === 'critical'))
+    clearResolvedAlerts: () =>
+      setAlerts((prev) => prev.filter((a) => a.severity === 'critical')),
   };
 }

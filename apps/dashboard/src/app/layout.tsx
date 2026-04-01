@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Sidebar from "@/components/layout/Sidebar";
-import TopBar from "@/components/layout/TopBar";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,18 +28,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full bg-surface-base text-content-primary">
-        {/* Persistent sidebar */}
-        <Sidebar
-          clinicName="Clínica Demo"
-          isConnected={false}
-          alertCount={0}
-        />
-
-        {/* Main content — offset by sidebar width */}
-        <div style={{ marginLeft: 240 }} className="flex flex-col min-h-screen">
-          <TopBar pageTitle="Dashboard" isConnected={false} />
-          <main className="flex-1 p-6">{children}</main>
-        </div>
+        {children}
       </body>
     </html>
   );
