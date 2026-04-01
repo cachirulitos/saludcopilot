@@ -1,5 +1,13 @@
+"""
+POST /api/v1/visits/check-in
+GET  /api/v1/visits/{visit_id}/context
+POST /api/v1/visits/{visit_id}/advance-step
+"""
+
 import uuid
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 import redis.asyncio as redis
 from fastapi import APIRouter, Depends, status
@@ -26,10 +34,15 @@ from app.schemas.schemas import (
     VisitContextResponse,
     VisitContextStepResponse,
 )
-from rules_engine.engine import Study, calculate_sequence
+
+engine_routes = Path("/packages")
+sys.path.append(str(engine_routes))
+
+from rules_engine.src.rules_engine.engine import Study, calculate_sequence
 
 router = APIRouter()
 
+# Placeholder until the ML model is integrated (Task 7 of api TASK.md)
 PLACEHOLDER_WAIT_MINUTES = 15
 
 redis_client = redis.from_url(settings.redis_url)
@@ -45,11 +58,26 @@ async def list_visits(db: AsyncSession = Depends(get_db)):
     "/check-in",
     response_model=CheckInResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Register a patient visit and calculate the study sequence",
 )
 async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
-    """Registers a patient visit and calculates the optimal study sequence."""
+    """
+    Registers a patient visit (walk-in or appointment) and returns the
+    optimal study sequence calculated by the clinical rules engine.
 
-    # 1. Find or create patient
+    Steps:
+    1. Find or create Patient by phone_number.
+    2. Create Visit.
+    3. Validate all study_ids map to existing ClinicalArea rows.
+    4. Build Study objects for the rules engine.
+    5. Run calculate_sequence().
+    6. Persist VisitStep rows for each sequence step.
+    7. Record arrival PatientEvent.
+    8. Push visit_id to Redis queue for the first area.
+    9. Return 201 with CheckInResponse.
+    """
+
+    # ── Step 1: find or create patient ───────────────────────────────────
     result = await db.execute(
         select(Patient).where(Patient.phone_number == request.phone_number)
     )
@@ -61,9 +89,9 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
             full_name="Paciente " + request.phone_number[-4:],
         )
         db.add(patient)
-        await db.flush()
+        await db.flush()  # assigns patient.id before FK use
 
-    # 2. Create visit
+    # ── Step 2: create visit ──────────────────────────────────────────────
     visit = Visit(
         patient_id=patient.id,
         clinic_id=request.clinic_id,
@@ -72,10 +100,10 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
         is_urgent=request.is_urgent,
     )
     db.add(visit)
-    await db.flush()
+    await db.flush()  # assigns visit.id before FK use
 
-    # 3. Look up clinical areas for each study_id
-    areas = []
+    # ── Step 3: resolve study_ids → ClinicalArea rows ────────────────────
+    areas: list[ClinicalArea] = []
     for study_id in request.study_ids:
         result = await db.execute(
             select(ClinicalArea).where(ClinicalArea.id == study_id)
@@ -88,11 +116,12 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
             )
         areas.append(area)
 
-    # 4. Build Study objects for rules engine
+    # ── Step 4: build Study objects for the rules engine ─────────────────
+    # `type` matches Study.type (renamed from study_type in engine.py)
     studies = [
         Study(
             id=str(area.id),
-            study_type=area.study_type,
+            type=area.study_type,
             requires_fasting=(area.study_type == "laboratorio"),
             is_urgent=request.is_urgent,
             has_appointment=request.has_appointment,
@@ -100,12 +129,12 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
         for area in areas
     ]
 
-    # 5. Calculate optimal sequence
+    # ── Step 5: calculate optimal sequence ───────────────────────────────
     sequence_result = calculate_sequence(studies)
 
-    # 6. Create VisitStep for each step in the sequence
-    area_by_id = {str(area.id): area for area in areas}
-    sequence_response = []
+    # ── Steps 6: persist VisitStep rows ──────────────────────────────────
+    area_by_id: dict[str, ClinicalArea] = {str(area.id): area for area in areas}
+    sequence_response: list[SequenceStepResponse] = []
 
     for step in sequence_result.steps:
         area = area_by_id[step.study.id]
@@ -128,15 +157,16 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
             )
         )
 
-    # 7. Create arrival event
-    arrival_event = PatientEvent(
-        visit_id=visit.id,
-        event_type="arrival",
-        event_metadata={},
+    # ── Step 7: record arrival event ──────────────────────────────────────
+    db.add(
+        PatientEvent(
+            visit_id=visit.id,
+            event_type="arrival",
+            event_metadata={},
+        )
     )
-    db.add(arrival_event)
 
-    # 8. Push to Redis queue for first area
+    # ── Step 8: push to Redis queue for first area ────────────────────────
     if sequence_result.steps:
         first_area_id = sequence_result.steps[0].study.id
         timestamp_score = datetime.now(timezone.utc).timestamp()
@@ -145,7 +175,7 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
             {str(visit.id): timestamp_score},
         )
 
-    # 9. Flush all to DB
+    # ── Step 9: flush remaining inserts and return ────────────────────────
     await db.flush()
 
     return CheckInResponse(
@@ -159,14 +189,18 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
 @router.get(
     "/{visit_id}/context",
     response_model=VisitContextResponse,
+    summary="Get current visit context for bot or dashboard",
 )
 async def get_visit_context(
     visit_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Returns the current context of a visit for the bot or dashboard."""
+    """
+    Returns the current state of a visit.
+    Used by the bot to build WhatsApp messages and by the dashboard.
+    """
 
-    # 1. Find visit by id
+    # 1. Find visit
     result = await db.execute(select(Visit).where(Visit.id == visit_id))
     visit = result.scalar_one_or_none()
 
@@ -176,11 +210,11 @@ async def get_visit_context(
             content={"error": "Visit not found", "code": "VISIT_NOT_FOUND"},
         )
 
-    # 2. Load related patient
+    # 2. Load patient
     result = await db.execute(select(Patient).where(Patient.id == visit.patient_id))
     patient = result.scalar_one()
 
-    # 3. Load all visit steps ordered by step_order
+    # 3. Load all steps ordered
     result = await db.execute(
         select(VisitStep)
         .where(VisitStep.visit_id == visit_id)
@@ -194,32 +228,26 @@ async def get_visit_context(
             content={"error": "Visit has no steps", "code": "NO_STEPS_FOUND"},
         )
 
-    # 4. Identify current_step: first step where status != completed
-    current_step = None
-    for step in steps:
-        if step.status != VisitStepStatus.COMPLETED:
-            current_step = step
-            break
+    # 4. Current step = first non-completed; fallback to last
+    current_step = next(
+        (s for s in steps if s.status != VisitStepStatus.COMPLETED),
+        steps[-1],
+    )
 
-    # If all steps are completed, current_step is the last one
-    if current_step is None:
-        current_step = steps[-1]
-
-    # 5. For current_step: look up WaitTimeEstimate by clinical_area_id
+    # 5. Live wait time from WaitTimeEstimate if available
     result = await db.execute(
         select(WaitTimeEstimate).where(
             WaitTimeEstimate.clinical_area_id == current_step.clinical_area_id
         )
     )
     wait_estimate = result.scalar_one_or_none()
-
     current_wait_minutes = (
         wait_estimate.estimated_minutes
         if wait_estimate is not None
         else current_step.estimated_wait_minutes
     )
 
-    # Load area name for current step
+    # 6. Area name for current step
     result = await db.execute(
         select(ClinicalArea).where(ClinicalArea.id == current_step.clinical_area_id)
     )
@@ -233,8 +261,8 @@ async def get_visit_context(
         rule_applied=current_step.rule_applied,
     )
 
-    # 6. remaining_steps: all pending steps excluding current
-    remaining_steps_response = []
+    # 7. Remaining steps (pending, excluding current)
+    remaining_steps_response: list[VisitContextStepResponse] = []
     for step in steps:
         if step.status == VisitStepStatus.PENDING and step.id != current_step.id:
             result = await db.execute(
@@ -251,7 +279,6 @@ async def get_visit_context(
                 )
             )
 
-    # 7. total_estimated_minutes = current + remaining
     total_estimated_minutes = current_wait_minutes + sum(
         s.estimated_wait_minutes for s in remaining_steps_response
     )
