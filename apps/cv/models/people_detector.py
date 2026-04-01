@@ -15,20 +15,24 @@ class PeopleDetector:
 
     def count_people_in_frame(self, frame: np.ndarray) -> int:
         """Return the number of people detected in a single frame."""
-        results = self.model(frame, verbose=False)
+        results = self.model(frame, verbose=False, classes=[PERSON_CLASS_ID])
         return self._count_from_results(results)
 
     def count_people_with_annotated_frame(
         self, frame: np.ndarray
     ) -> tuple[int, np.ndarray]:
-        """Return (people_count, annotated_frame) for display purposes."""
-        results = self.model(frame, verbose=False)
+        """Return (people_count, annotated_frame) for display purposes.
+
+        Only person detections are run and drawn — non-human objects are ignored
+        at inference time by passing classes=[PERSON_CLASS_ID] to the model.
+        """
+        results = self.model(frame, verbose=False, classes=[PERSON_CLASS_ID])
         people_count = self._count_from_results(results)
         annotated_frame = results[0].plot()
         return people_count, annotated_frame
 
     def _count_from_results(self, results) -> int:
-        """Count detections matching person class above confidence threshold."""
+        """Count person detections above the confidence threshold."""
         return sum(
             1
             for box in results[0].boxes
