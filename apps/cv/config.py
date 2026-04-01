@@ -19,7 +19,7 @@ class CVSettings(BaseSettings):
     capture_interval_seconds: int = 5
     yolo_model_name: str = "yolov8n.pt"
     confidence_threshold: float = 0.4
-    target_class_id: int = 0
+    smoothing_window_size: int = 15
     camera_to_area_mapping: str = "{}"
 
     @property

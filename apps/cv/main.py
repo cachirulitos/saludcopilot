@@ -66,12 +66,47 @@ def _publish_in_background(area_id: str, people_count: int) -> None:
         print(f"Error publicando conteo: {exc}")
 
 
+def _resolve_area_id(video_path: str, area_id_override: str) -> str:
+    """Return the area UUID this worker instance should publish to.
+
+    Resolution order:
+    1. --area-id CLI argument (explicit override, works for both camera and video)
+    2. CAMERA_TO_AREA_MAPPING[camera_index] (camera mode only)
+
+    Exits with an error if no area can be resolved.
+    """
+    if area_id_override:
+        return area_id_override
+
+    if video_path:
+        print(
+            "ERROR: --area-id es obligatorio cuando se usa --video.\n"
+            "Ejemplo: python main.py --video sala.mp4 --area-id <UUID>"
+        )
+        sys.exit(1)
+
+    area_mapping = settings.area_mapping
+    area_id = area_mapping.get(str(settings.camera_index))
+    if not area_id:
+        print(
+            f"ERROR: CAMERA_INDEX={settings.camera_index} no tiene entrada en "
+            "CAMERA_TO_AREA_MAPPING. Agrega la clave al .env o usa --area-id."
+        )
+        sys.exit(1)
+    return area_id
+
+
 def run_loop(
     demo_mode: bool = False,
     show_window: bool = True,
     video_path: str = "",
+    area_id_override: str = "",
 ) -> None:
     """Main capture loop: read frames, count people, publish to API.
+
+    Each worker instance handles exactly one video source (camera or file)
+    and publishes to exactly one clinical area. For multiple cameras, run
+    one instance per camera with the appropriate --area-id.
 
     Runs synchronously so OpenCV window events are processed correctly.
     HTTP publishing runs in background threads to avoid blocking the UI.
@@ -81,16 +116,23 @@ def run_loop(
         show_window: Display a preview window with annotated detections.
         video_path: Path to a video file to use as frame source. When empty,
             the configured camera index is used. Ignored in demo_mode.
+        area_id_override: UUID of the clinical area to publish to. Required
+            when using --video; optional for camera mode (falls back to mapping).
     """
-    area_mapping = settings.area_mapping
-    if not area_mapping:
-        print(
-            "ERROR: CAMERA_TO_AREA_MAPPING esta vacio. "
-            "Configura el .env con los UUIDs de las areas."
-        )
-        sys.exit(1)
+    if not demo_mode:
+        area_id = _resolve_area_id(video_path, area_id_override)
+    else:
+        # Demo mode: use override or first entry in mapping
+        area_id = area_id_override or next(iter(settings.area_mapping.values()), "")
+        if not area_id:
+            print("ERROR: CAMERA_TO_AREA_MAPPING esta vacio.")
+            sys.exit(1)
 
-    detector = PeopleDetector(settings.yolo_model_name, settings.confidence_threshold)
+    detector = PeopleDetector(
+        settings.yolo_model_name,
+        settings.confidence_threshold,
+        settings.smoothing_window_size,
+    )
     capture = None
     demo_index = 0
 
@@ -104,7 +146,7 @@ def run_loop(
     else:
         mode_label = "DEMO"
 
-    print(f"SaludCopilot CV Worker iniciado. Modo: {mode_label}")
+    print(f"SaludCopilot CV Worker iniciado. Modo: {mode_label} | Area: {area_id}")
     if show_window:
         print("Presiona 'q' en la ventana para salir.")
 
@@ -134,13 +176,12 @@ def run_loop(
             now = time.monotonic()
             if now - last_publish_time >= publish_interval:
                 last_publish_time = now
-                for _camera_index, area_id in area_mapping.items():
-                    thread = threading.Thread(
-                        target=_publish_in_background,
-                        args=(area_id, people_count),
-                        daemon=True,
-                    )
-                    thread.start()
+                thread = threading.Thread(
+                    target=_publish_in_background,
+                    args=(area_id, people_count),
+                    daemon=True,
+                )
+                thread.start()
 
             # --- Display ---
             if show_window:
@@ -176,5 +217,16 @@ if __name__ == "__main__":
         help="Ruta a un archivo de video (mp4, avi, etc.) como fuente de frames. "
              "Si no se indica, usa la camara configurada en CAMERA_INDEX.",
     )
+    parser.add_argument(
+        "--area-id", metavar="UUID", default="",
+        help="UUID del área clínica a la que publicar el conteo. "
+             "Obligatorio con --video. En modo cámara, se puede omitir si "
+             "CAMERA_TO_AREA_MAPPING tiene entrada para CAMERA_INDEX.",
+    )
     args = parser.parse_args()
-    run_loop(demo_mode=args.demo, show_window=not args.no_window, video_path=args.video)
+    run_loop(
+        demo_mode=args.demo,
+        show_window=not args.no_window,
+        video_path=args.video,
+        area_id_override=args.area_id,
+    )
