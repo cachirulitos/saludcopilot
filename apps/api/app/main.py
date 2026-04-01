@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.database import init_db
-from app.routers import patients, visits, areas, visit_steps, notifications
+from app.routers import patients, visits, areas, visit_steps, notifications, dashboard
 
 
 @asynccontextmanager
@@ -37,6 +37,7 @@ app.include_router(visits.router,        prefix="/api/v1/visits",        tags=["
 app.include_router(areas.router,         prefix="/api/v1/areas",         tags=["Areas"])
 app.include_router(visit_steps.router,   prefix="/api/v1/visit-steps",   tags=["Visit Steps"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["Notifications"])
+app.include_router(dashboard.router,     tags=["Dashboard"])
 
 
 @app.get("/health", tags=["System"])

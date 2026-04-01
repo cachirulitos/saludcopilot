@@ -10,8 +10,10 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_id: str = ""
     whatsapp_verify_token: str = "saludcopilot_verify"
-    anthropic_api_key: str = ""
+    llm_api_key: str = ""
     cors_allowed_origins: str = "http://localhost:3000"
+    bot_base_url: str = "http://localhost:8001"
+    internal_bot_token: str = "saludcopilot-internal-token-change-in-prod"
 
     class Config:
         env_file = ".env"

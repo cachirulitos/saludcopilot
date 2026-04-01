@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.routers.dashboard import broadcast_to_clinic
+from app.services.notification_service import trigger_bot_notification
 from app.models.models import (
     ClinicalArea,
     Patient,
@@ -28,6 +30,8 @@ from app.models.models import (
     WaitTimeEstimate,
 )
 from app.schemas.schemas import (
+    AdvanceStepResponse,
+    AdvanceStepStepResponse,
     CheckInRequest,
     CheckInResponse,
     SequenceStepResponse,
@@ -44,14 +48,13 @@ router = APIRouter()
 
 # Placeholder until the ML model is integrated (Task 7 of api TASK.md)
 PLACEHOLDER_WAIT_MINUTES = 15
+FASTING_STUDY_TYPE = "laboratorio"
+DEFAULT_PATIENT_NAME_PREFIX = "Paciente "
 
 redis_client = redis.from_url(settings.redis_url)
 
 
-@router.get("/")
-async def list_visits(db: AsyncSession = Depends(get_db)):
-    """Lists visits. Not implemented yet."""
-    return {"status": "not implemented", "resource": "visits"}
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 
 @router.post(
@@ -79,14 +82,13 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
 
     # ── Step 1: find or create patient ───────────────────────────────────
     result = await db.execute(
-        select(Patient).where(Patient.phone_number == request.phone_number)
+        select(Patient).where(Patient.phone_number == phone_number)
     )
     patient = result.scalar_one_or_none()
-
     if patient is None:
         patient = Patient(
-            phone_number=request.phone_number,
-            full_name="Paciente " + request.phone_number[-4:],
+            phone_number=phone_number,
+            full_name=DEFAULT_PATIENT_NAME_PREFIX + phone_number[-4:],
         )
         db.add(patient)
         await db.flush()  # assigns patient.id before FK use
@@ -115,6 +117,8 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
                 content={"error": "Area not found", "code": "AREA_NOT_FOUND"},
             )
         areas.append(area)
+    return areas
+
 
     # ── Step 4: build Study objects for the rules engine ─────────────────
     # `type` matches Study.type (renamed from study_type in engine.py)
@@ -138,24 +142,20 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
 
     for step in sequence_result.steps:
         area = area_by_id[step.study.id]
-        visit_step = VisitStep(
+        db.add(VisitStep(
             visit_id=visit.id,
             clinical_area_id=area.id,
             step_order=step.order,
             status=VisitStepStatus.PENDING,
             rule_applied=step.rule_applied,
             estimated_wait_minutes=PLACEHOLDER_WAIT_MINUTES,
-        )
-        db.add(visit_step)
-
-        sequence_response.append(
-            SequenceStepResponse(
-                order=step.order,
-                area_name=area.name,
-                estimated_wait_minutes=PLACEHOLDER_WAIT_MINUTES,
-                rule_applied=step.rule_applied,
-            )
-        )
+        ))
+        sequence_response.append(SequenceStepResponse(
+            order=step.order,
+            area_name=area.name,
+            estimated_wait_minutes=PLACEHOLDER_WAIT_MINUTES,
+            rule_applied=step.rule_applied,
+        ))
 
     # ── Step 7: record arrival event ──────────────────────────────────────
     db.add(
@@ -168,22 +168,23 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
 
     # ── Step 8: push to Redis queue for first area ────────────────────────
     if sequence_result.steps:
-        first_area_id = sequence_result.steps[0].study.id
-        timestamp_score = datetime.now(timezone.utc).timestamp()
-        await redis_client.zadd(
-            f"queue:{first_area_id}",
-            {str(visit.id): timestamp_score},
-        )
+        await _enqueue_first_area(visit.id, sequence_result.steps[0].study.id)
 
     # ── Step 9: flush remaining inserts and return ────────────────────────
     await db.flush()
 
-    return CheckInResponse(
+    response = CheckInResponse(
         visit_id=visit.id,
         patient_id=patient.id,
         sequence=sequence_response,
         total_estimated_minutes=sequence_result.estimated_time_minutes,
     )
+    await trigger_bot_notification(
+        visit_id=str(visit.id),
+        notification_type="welcome",
+        payload=response.model_dump(mode="json"),
+    )
+    return response
 
 
 @router.get(
@@ -203,7 +204,6 @@ async def get_visit_context(
     # 1. Find visit
     result = await db.execute(select(Visit).where(Visit.id == visit_id))
     visit = result.scalar_one_or_none()
-
     if visit is None:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -220,9 +220,8 @@ async def get_visit_context(
         .where(VisitStep.visit_id == visit_id)
         .order_by(VisitStep.step_order)
     )
-    steps = list(result.scalars().all())
-
-    if not steps:
+    visit_steps = list(result.scalars().all())
+    if not visit_steps:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content={"error": "Visit has no steps", "code": "NO_STEPS_FOUND"},
@@ -265,19 +264,14 @@ async def get_visit_context(
     remaining_steps_response: list[VisitContextStepResponse] = []
     for step in steps:
         if step.status == VisitStepStatus.PENDING and step.id != current_step.id:
-            result = await db.execute(
-                select(ClinicalArea).where(ClinicalArea.id == step.clinical_area_id)
-            )
-            area = result.scalar_one()
-            remaining_steps_response.append(
-                VisitContextStepResponse(
-                    order=step.step_order,
-                    area_name=area.name,
-                    status=step.status.value,
-                    estimated_wait_minutes=step.estimated_wait_minutes,
-                    rule_applied=step.rule_applied,
-                )
-            )
+            area = await _load_area_by_id(step.clinical_area_id, db)
+            remaining_steps_response.append(VisitContextStepResponse(
+                order=step.step_order,
+                area_name=area.name,
+                status=step.status.value,
+                estimated_wait_minutes=step.estimated_wait_minutes,
+                rule_applied=step.rule_applied,
+            ))
 
     total_estimated_minutes = current_wait_minutes + sum(
         s.estimated_wait_minutes for s in remaining_steps_response
@@ -289,4 +283,87 @@ async def get_visit_context(
         current_step=current_step_response,
         remaining_steps=remaining_steps_response,
         total_estimated_minutes=total_estimated_minutes,
+    )
+
+
+@router.post("/{visit_id}/advance-step", response_model=AdvanceStepResponse)
+async def advance_step(
+    visit_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Advance the current visit step to completed and start the next one."""
+    result = await db.execute(select(Visit).where(Visit.id == visit_id))
+    visit = result.scalar_one_or_none()
+    if visit is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={"error": "Visit not found", "code": "VISIT_NOT_FOUND"},
+        )
+
+    current_step = await _find_visit_step_by_status(visit_id, VisitStepStatus.IN_PROGRESS, db)
+    if current_step is None:
+        current_step = await _find_visit_step_by_status(visit_id, VisitStepStatus.PENDING, db)
+    if current_step is None:
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={"error": "No steps to advance", "code": "NO_STEPS"},
+        )
+
+    actual_wait_minutes = await _complete_current_step(current_step)
+    current_area = await _load_area_by_id(current_step.clinical_area_id, db)
+
+    db.add(PatientEvent(
+        visit_id=visit.id,
+        event_type="step_completed",
+        event_metadata={"area": current_area.name, "actual_wait": actual_wait_minutes},
+    ))
+
+    next_step = await _find_visit_step_by_status(visit_id, VisitStepStatus.PENDING, db)
+    completed_step_response = AdvanceStepStepResponse(
+        order=current_step.step_order,
+        area_name=current_area.name,
+        status="completed",
+        actual_wait_minutes=actual_wait_minutes,
+    )
+    next_step_response = None
+
+    if next_step is not None:
+        await _start_next_step(next_step, current_step.clinical_area_id, visit.id)
+        next_area = await _load_area_by_id(next_step.clinical_area_id, db)
+        next_step_response = AdvanceStepStepResponse(
+            order=next_step.step_order,
+            area_name=next_area.name,
+            status="in_progress",
+        )
+        position = await redis_client.zrank(
+            f"queue:{next_step.clinical_area_id}", str(visit.id)
+        )
+        await trigger_bot_notification(
+            visit_id=str(visit.id),
+            notification_type="turn_ready",
+            payload={
+                "area_name": next_area.name,
+                "estimated_wait_minutes": next_step.estimated_wait_minutes or PLACEHOLDER_WAIT_MINUTES,
+                "position_in_queue": position if position is not None else 0,
+            },
+        )
+    else:
+        await _finish_visit(visit, current_step.clinical_area_id, db)
+
+    await db.flush()
+
+    broadcast_area_name = next_step_response.area_name if next_step_response else current_area.name
+    await broadcast_to_clinic(
+        str(visit.clinic_id),
+        {
+            "event": "visit_updated",
+            "data": {"status": visit.status.value, "current_area": broadcast_area_name},
+        },
+    )
+
+    return AdvanceStepResponse(
+        visit_id=visit.id,
+        visit_status=visit.status.value,
+        completed_step=completed_step_response,
+        next_step=next_step_response,
     )
