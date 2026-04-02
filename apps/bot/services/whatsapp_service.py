@@ -10,11 +10,19 @@ WHATSAPP_API_URL = "https://graph.facebook.com/v19.0/{phone_id}/messages"
 HTTP_TIMEOUT_SECONDS = 10.0
 
 
+def _normalize_mx_phone(phone: str) -> str:
+    """Strip leading + and remove the extra '1' Mexico mobile prefix (521XXXXXXXXXX → 52XXXXXXXXXX)."""
+    digits = phone.lstrip("+")
+    if digits.startswith("521") and len(digits) == 13:
+        digits = "52" + digits[3:]
+    return digits
+
+
 async def send_text_message(phone_number: str, message: str) -> bool:
     """Send a plain text message via the WhatsApp Cloud API. Returns True on success."""
     request_payload = {
         "messaging_product": "whatsapp",
-        "to": phone_number,
+        "to": _normalize_mx_phone(phone_number),
         "type": "text",
         "text": {"body": message},
     }
