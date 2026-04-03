@@ -1,11 +1,10 @@
 from dataclasses import dataclass, field
-
 import numpy as np
+import cv2
 
 PERSON_CLASS_ID = 0
-
 THRESHOLD_WARNING = 4
-THRESHOLD_SATURATED = 7
+THRESHOLD_SATURATED = 8
 
 # BGR colors
 COLOR_NORMAL = (80, 200, 80)
@@ -13,9 +12,15 @@ COLOR_WARNING = (0, 165, 255)
 COLOR_SATURATED = (0, 0, 220)
 COLOR_OUTSIDE_ROI = (100, 100, 100)
 
+# ── Parámetros de detección recomendados para cámaras de seguridad ──────────
+DEFAULT_CONF      = 0.25   # ↓ Más bajo para no perder personas lejanas/pequeñas
+DEFAULT_IOU       = 0.45   # Controla fusión de cajas solapadas (personas juntas)
+DEFAULT_IMGSZ     = 1280   # ↑ Mayor resolución → detecta personas pequeñas
+DEFAULT_AUGMENT   = True   # Test-time augmentation: mejora detección a costa de fps
+# ────────────────────────────────────────────────────────────────────────────
+
 
 def classify_status(count: int) -> str:
-    """Return 'normal', 'warning', or 'saturated' based on people count."""
     if count >= THRESHOLD_SATURATED:
         return "saturated"
     if count >= THRESHOLD_WARNING:
@@ -24,44 +29,75 @@ def classify_status(count: int) -> str:
 
 
 def status_color(status: str) -> tuple[int, int, int]:
-    """Return BGR color for a given status string."""
-    return {"normal": COLOR_NORMAL, "warning": COLOR_WARNING, "saturated": COLOR_SATURATED}.get(
-        status, COLOR_NORMAL
-    )
+    return {"normal": COLOR_NORMAL, "warning": COLOR_WARNING,
+            "saturated": COLOR_SATURATED}.get(status, COLOR_NORMAL)
 
 
 def point_in_roi(cx: float, cy: float, roi: tuple[int, int, int, int]) -> bool:
-    """Return True if (cx, cy) falls inside the ROI rectangle."""
     x1, y1, x2, y2 = roi
     return x1 <= cx <= x2 and y1 <= cy <= y2
 
 
+def enhance_frame(frame: np.ndarray) -> np.ndarray:
+    """
+    Mejora de contraste con CLAHE en canal L (LAB).
+    Ayuda mucho en cámaras oscuras o con IR.
+    """
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    enhanced = cv2.merge((l, a, b))
+    return cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+
+
 @dataclass
 class DetectionFrame:
-    """Result of one detection pass."""
-
     count: int
     status: str
     color: tuple[int, int, int]
-    tracks_in_roi: list = field(default_factory=list)   # [(x1,y1,x2,y2,track_id), ...]
+    tracks_in_roi: list = field(default_factory=list)
     tracks_outside_roi: list = field(default_factory=list)
 
 
 class PeopleDetector:
-    """Detect and track people in video frames using YOLOv8 + ByteTrack.
+    """
+    Detecta y rastrea personas con YOLOv8 + ByteTrack,
+    optimizado para grabaciones de cámaras de seguridad.
 
-    ByteTrack assigns persistent IDs to each person across frames, giving a
-    stable per-area count without needing temporal smoothing. People whose
-    bounding-box center falls outside the configured ROI are excluded from the
-    count but still drawn (dimmed) so operators can see the full frame.
+    Mejoras respecto a la versión original:
+    - Preprocesado CLAHE para mejorar contraste en escenas oscuras
+    - imgsz=1280 para detectar personas pequeñas/lejanas
+    - conf=0.25 para no perder detecciones en cámaras cenitales
+    - iou=0.45 para separar personas que se solapan
+    - augment=True para test-time augmentation
+    - Soporte de modelos alternativos recomendados para vigilancia
     """
 
-    def __init__(self, model_name: str, confidence_threshold: float) -> None:
+    # Modelos recomendados en orden de precisión vs velocidad:
+    # - "yolov8x.pt"          → máxima precisión, más lento
+    # - "yolov8l.pt"          → buen balance (recomendado para producción)
+    # - "yolov8m.pt"          → balance intermedio
+    # - "yolov8s.pt"          → rápido, menor precisión
+    # - "yolov8n.pt"          → muy rápido, precisión limitada en cámaras lejanas
+    # Para ángulos cenitales considera modelos especializados:
+    # - "yolov8x-worldv2.pt"  → mejor generalización
+    # - Modelos fine-tuned en datasets de vigilancia (VisDrone, CCTV, etc.)
+
+    def __init__(
+        self,
+        model_name: str = "yolov8l.pt",
+        confidence_threshold: float = DEFAULT_CONF,
+        iou_threshold: float = DEFAULT_IOU,
+        imgsz: int = DEFAULT_IMGSZ,
+        augment: bool = DEFAULT_AUGMENT,
+        enhance: bool = True,
+    ) -> None:
         from ultralytics import YOLO
         import torch
 
-        # Handle PyTorch 2.6+ default weights_only=True which breaks YOLO model loading
         original_load = torch.load
+
         def custom_load(*args, **kwargs):
             kwargs["weights_only"] = False
             return original_load(*args, **kwargs)
@@ -73,25 +109,29 @@ class PeopleDetector:
             torch.load = original_load
 
         self.confidence_threshold = confidence_threshold
+        self.iou_threshold = iou_threshold
+        self.imgsz = imgsz
+        self.augment = augment
+        self.enhance = enhance
 
     def detect(
         self,
         frame: np.ndarray,
         roi: tuple[int, int, int, int] | None = None,
     ) -> DetectionFrame:
-        """Run ByteTrack on frame and return a DetectionFrame.
+        # 1. Preprocesado: mejora contraste para cámaras oscuras/IR
+        processed = enhance_frame(frame) if self.enhance else frame
 
-        Args:
-            frame: BGR image as numpy array.
-            roi: Optional (x1, y1, x2, y2) rectangle. When provided, only
-                people whose center falls inside are counted. Outside people
-                are still tracked but excluded from the count.
-        """
+        # 2. Inferencia con parámetros optimizados para vigilancia
         results = self.model.track(
-            frame,
+            processed,
             persist=True,
             classes=[PERSON_CLASS_ID],
             tracker="bytetrack.yaml",
+            conf=self.confidence_threshold,   # ← antes no se pasaba explícitamente
+            iou=self.iou_threshold,           # ← nuevo: controla NMS
+            imgsz=self.imgsz,                 # ← nuevo: mayor resolución de inferencia
+            augment=self.augment,             # ← nuevo: test-time augmentation
             verbose=False,
         )
 

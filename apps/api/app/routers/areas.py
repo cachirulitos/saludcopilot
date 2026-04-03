@@ -71,15 +71,26 @@ async def update_occupancy(
     now = datetime.now()
     predictor = get_predictor()
     if predictor is not None:
-        estimated_minutes = predictor.predict_wait_minutes(
+        # Mapeamos el UUID de la API local al 'idSucursal' entero de la tabla histórica de ML
+        historical_clinic_id = 1 if str(area.clinic_id) == "1db93003-d50e-4f56-80d0-8b994b98eaa8" else 5
+        
+        base_ml_estimate = predictor.predict_wait_minutes(
             hour_of_day=now.hour,
             day_of_week=now.weekday(),
             study_type_raw_id=area.study_type,
-            clinic_raw_id=str(area.clinic_id),
+            clinic_raw_id=historical_clinic_id,
             simultaneous_capacity=area.simultaneous_capacity,
             current_queue_length=queue_length,
             has_appointment=False,
         )
+        
+        # El ML devuelve el tiempo base histórico. 
+        # Sumamos la penalización por la gente FISICA detectada en cámara y virtual en fila.
+        estimated_minutes = (
+            base_ml_estimate 
+            + (request.people_count * WAIT_MINUTES_PER_PERSON)
+        )
+        print(f"ML Base: {base_ml_estimate} | Total con {request.people_count} personas: {estimated_minutes}")
     else:
         base = BASE_WAIT_TIMES.get(area.study_type, DEFAULT_BASE_WAIT_MINUTES)
         estimated_minutes = (
