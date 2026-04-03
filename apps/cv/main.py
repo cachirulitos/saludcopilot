@@ -13,7 +13,7 @@ from utils.overlay import draw_demo_frame, draw_frame
 
 DEMO_PEOPLE_PATTERN = [3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 2, 2, 2]
 WINDOW_TITLE = "SaludCopilot — Monitoreo en tiempo real"
-WINDOW_REFRESH_MS = 33  # ~30 fps
+WINDOW_REFRESH_MS = 60  # ~30 fps
 
 
 def _open_camera() -> cv2.VideoCapture:
@@ -123,7 +123,7 @@ def run_loop(
     people_count = 0
     last_nonzero_count = 0
     last_nonzero_time = 0.0
-    zero_sustain_seconds = 8.0  # require 8s of sustained zeros before reporting 0
+    zero_sustain_seconds = 8.0
 
     if show_window:
         cv2.namedWindow(WINDOW_TITLE, cv2.WINDOW_NORMAL)
@@ -135,6 +135,7 @@ def run_loop(
                 people_count = DEMO_PEOPLE_PATTERN[demo_index % len(DEMO_PEOPLE_PATTERN)]
                 demo_index += 1
                 display_frame = draw_demo_frame(people_count, area_name, last_publish_time)
+
             else:
                 ok, raw_frame = capture.read()
                 if not ok:
@@ -148,7 +149,7 @@ def run_loop(
                 detection = detector.detect(raw_frame, roi=roi)
                 raw_count = detection.count
 
-                # Floor temporal: no reportar 0 a menos que se sostenga
+                # Floor temporal: no reportar 0 hasta que se sostenga
                 # por zero_sustain_seconds — evita caídas momentáneas
                 now_mono = time.monotonic()
                 if raw_count > 0:
@@ -179,7 +180,9 @@ def run_loop(
             if show_window:
                 cv2.imshow(WINDOW_TITLE, display_frame)
                 key = cv2.waitKey(WINDOW_REFRESH_MS) & 0xFF
-                window_closed = cv2.getWindowProperty(WINDOW_TITLE, cv2.WND_PROP_VISIBLE) < 1
+                window_closed = cv2.getWindowProperty(
+                    WINDOW_TITLE, cv2.WND_PROP_VISIBLE
+                ) < 1
                 if key == ord("q") or window_closed:
                     break
             else:

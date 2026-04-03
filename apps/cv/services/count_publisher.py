@@ -8,12 +8,13 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 HTTP_TIMEOUT_SECONDS = 5.0
-OCCUPANCY_PATH = "/api/v1/areas/{area_id}/occupancy"
+OCCUPANCY_PATH = "api/v1/areas/{area_id}/occupancy"
 
 
 async def publish_people_count(area_id: str, people_count: int) -> int | None:
     """POST the current people count to the API and return the estimated wait minutes."""
     url = f"{settings.api_base_url}{OCCUPANCY_PATH.format(area_id=area_id)}"
+    print(f"Publishing to {url}")
     headers = {"Authorization": f"Bearer {settings.internal_cv_token}"}
     payload = {
         "people_count": people_count,
