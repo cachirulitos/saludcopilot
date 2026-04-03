@@ -117,8 +117,6 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
                 content={"error": "Area not found", "code": "AREA_NOT_FOUND"},
             )
         areas.append(area)
-    return areas
-
 
     # ── Step 4: build Study objects for the rules engine ─────────────────
     # `type` matches Study.type (renamed from study_type in engine.py)
@@ -229,8 +227,8 @@ async def get_visit_context(
 
     # 4. Current step = first non-completed; fallback to last
     current_step = next(
-        (s for s in steps if s.status != VisitStepStatus.COMPLETED),
-        steps[-1],
+        (s for s in visit_steps if s.status != VisitStepStatus.COMPLETED),
+        visit_steps[-1],
     )
 
     # 5. Live wait time from WaitTimeEstimate if available
@@ -262,7 +260,7 @@ async def get_visit_context(
 
     # 7. Remaining steps (pending, excluding current)
     remaining_steps_response: list[VisitContextStepResponse] = []
-    for step in steps:
+    for step in visit_steps:
         if step.status == VisitStepStatus.PENDING and step.id != current_step.id:
             area = await _load_area_by_id(step.clinical_area_id, db)
             remaining_steps_response.append(VisitContextStepResponse(
