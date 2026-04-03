@@ -117,8 +117,6 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
                 content={"error": "Area not found", "code": "AREA_NOT_FOUND"},
             )
         areas.append(area)
-    return areas
-
 
     # ── Step 4: build Study objects for the rules engine ─────────────────
     # `type` matches Study.type (renamed from study_type in engine.py)
@@ -140,20 +138,49 @@ async def check_in(request: CheckInRequest, db: AsyncSession = Depends(get_db)):
     area_by_id: dict[str, ClinicalArea] = {str(area.id): area for area in areas}
     sequence_response: list[SequenceStepResponse] = []
 
+    from app.core.predictor_client import get_predictor
+    
     for step in sequence_result.steps:
         area = area_by_id[step.study.id]
+        
+        # Priority 1: Use the latest estimate produced by ML + Computer Vision
+        wait_estimate_result = await db.execute(
+            select(WaitTimeEstimate).where(WaitTimeEstimate.clinical_area_id == area.id)
+        )
+        wait_estimate = wait_estimate_result.scalar_one_or_none()
+        
+        if wait_estimate:
+            estimated_mins = wait_estimate.estimated_minutes
+        else:
+            # Priority 2: If CV camera is offline or hasn't pushed data yet, predict fresh ML stats assuming 0 physical queue
+            estimated_mins = PLACEHOLDER_WAIT_MINUTES
+            predictor = get_predictor()
+            if predictor:
+                now = datetime.now()
+                queue_length = await redis_client.zcard(f"queue:{area.id}")
+                historical_clinic_id = 1 if str(area.clinic_id) == "1db93003-d50e-4f56-80d0-8b994b98eaa8" else 5
+                estimated_mins = predictor.predict_wait_minutes(
+                    hour_of_day=now.hour,
+                    day_of_week=now.weekday(),
+                    study_type_raw_id=area.study_type,
+                    clinic_raw_id=historical_clinic_id,
+                    simultaneous_capacity=area.simultaneous_capacity,
+                    current_queue_length=queue_length,
+                    has_appointment=request.has_appointment,
+                )
+                
         db.add(VisitStep(
             visit_id=visit.id,
             clinical_area_id=area.id,
             step_order=step.order,
             status=VisitStepStatus.PENDING,
             rule_applied=step.rule_applied,
-            estimated_wait_minutes=PLACEHOLDER_WAIT_MINUTES,
+            estimated_wait_minutes=int(estimated_mins),
         ))
         sequence_response.append(SequenceStepResponse(
             order=step.order,
             area_name=area.name,
-            estimated_wait_minutes=PLACEHOLDER_WAIT_MINUTES,
+            estimated_wait_minutes=int(estimated_mins),
             rule_applied=step.rule_applied,
         ))
 

@@ -215,20 +215,18 @@ async def update_area(
 # ── Rules ─────────────────────────────────────────────────────────────────────
 
 
+import sys
+from app.core.config import ROOT_DIR
+sys.path.append(str(ROOT_DIR))
+from packages.rules_engine.src.rules_engine.engine import RULES
+
 @router.get("/rules")
-async def list_rules(db: AsyncSession = Depends(get_db)):
-    """List all clinical rules."""
-    result = await db.execute(select(ClinicalRule).order_by(ClinicalRule.code))
-    rules = result.scalars().all()
-    return [
-        {
-            "id": str(r.id),
-            "code": r.code,
-            "description": r.description,
-            "rule_type": r.rule_type,
-            "active": r.active,
-            "condition": r.condition,
-            "effect": r.effect,
-        }
-        for r in rules
-    ]
+async def list_rules():
+    """List all clinical rules by interacting directly with the engine package."""
+    serializable_rules = []
+    for r in RULES:
+        rule_dict = dict(r)
+        if "affected_types" in rule_dict and isinstance(rule_dict["affected_types"], set):
+            rule_dict["affected_types"] = list(rule_dict["affected_types"])
+        serializable_rules.append(rule_dict)
+    return serializable_rules
