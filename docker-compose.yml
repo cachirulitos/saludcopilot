@@ -4,22 +4,19 @@ version: '3.9'
 # SaludCopilot — Entorno de desarrollo local
 #
 # USO:
-#   docker compose up             → levanta todos los servicios
-#   docker compose up dashboard   → solo el dashboard con HMR
+#   docker compose up --build     → levanta TODO (DB, Redis, API, Bot, Dashboard)
 #   docker compose up -d          → en background
 #   docker compose down -v        → apaga y borra datos (reset total)
 #
-# Servicios con hot reload:
-#   - api       → uvicorn --reload  en :8000
+# Servicios (todos con hot reload):
+#   - postgres    → :5433
+#   - redis       → :6379
+#   - api         → uvicorn --reload  en :8000
+#   - bot         → uvicorn --reload  en :8001
+#   - dashboard   → bun dev           en :3000
 #
 # Lo que corre local (fuera de Docker):
-#   - dashboard → cd apps/dashboard && bun run dev   → :3000
-#   - bot       → proceso Python independiente
-#   - cv        → proceso Python con webcam
-#
-# El dashboard NO corre en Docker porque bun.lockb es binario y específico
-# a la versión de bun — la imagen del contenedor siempre difiere, lo que
-# causa que --frozen-lockfile falle. El dev server local arranca en <2s.
+#   - cv        → requiere acceso a webcam, no puede correr en contenedor
 # ─────────────────────────────────────────────────────────────────────────
 
 services:
@@ -67,6 +64,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
+      BOT_BASE_URL: http://bot:8001
       WATCHFILES_FORCE_POLLING: "true"
     ports:
       - "8000:8000"
@@ -80,6 +78,28 @@ services:
       redis:
         condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  bot:
+    build:
+      context: .
+      dockerfile: apps/bot/Dockerfile.dev
+    container_name: saludcopilot_bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      API_BASE_URL: http://api:8000
+      WATCHFILES_FORCE_POLLING: "true"
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./apps/bot:/app:z
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 
   dashboard:
     build:
@@ -95,6 +115,7 @@ services:
       WATCHPACK_POLLING: "true"
       # Point dashboard at the API container (not localhost)
       NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WA_PHONE_NUMBER: ${WHATSAPP_PHONE_NUMBER}
       NEXT_TELEMETRY_DISABLED: "1"
     ports:
       - "3000:3000"

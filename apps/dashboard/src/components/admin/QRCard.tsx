@@ -18,12 +18,8 @@ interface QRCardProps {
 export function QRCard({ areaId, areaName, clinicId }: QRCardProps) {
   const [copied, setCopied] = useState(false);
 
-  const baseUrl =
-    typeof window !== "undefined"
-      ? `${window.location.protocol}//${window.location.host}`
-      : "http://localhost:3000";
-
-  const checkinUrl = `${baseUrl}/checkin/${clinicId}?area=${areaId}`;
+  const waPhoneNumber = process.env.NEXT_PUBLIC_WA_PHONE_NUMBER ?? "";
+  const checkinUrl = `https://wa.me/${waPhoneNumber}?text=CHECKIN_${clinicId}_${areaId}`;
 
   function handleCopy() {
     navigator.clipboard.writeText(checkinUrl);

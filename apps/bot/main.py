@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from config import settings
-from services.api_client import get_visit_context
+from services.api_client import get_visit_context, register_visit
 from services.llm_service import generate_response
 from services.session_service import (
     delete_session,
@@ -41,6 +41,8 @@ PREPARATION_REQUIRED = {
     "tomografia": "preparación específica indicada por el médico",
     "resonancia": "preparación específica indicada por el médico",
 }
+
+CHECKIN_PREFIX = "CHECKIN_"
 
 PREPARATION_CONFIRM_WORDS = {"sí", "si", "yes", "claro", "listo"}
 PREPARATION_DENY_WORDS = {"no", "no pude", "no completé"}
@@ -135,7 +137,13 @@ async def _handle_incoming_message(incoming_message: dict) -> None:
 
 
 async def _process_message(phone_number: str, message_text: str) -> None:
-    """Core message processing: session check, preparation flow, then LLM."""
+    """Core message processing: check-in via QR, preparation flow, then LLM."""
+
+    # ── WhatsApp-based check-in (QR → wa.me deep link) ────────────────
+    if message_text.startswith(CHECKIN_PREFIX):
+        await _handle_checkin_message(phone_number, message_text)
+        return
+
     session = await get_session(phone_number)
 
     if session is None:
@@ -187,6 +195,54 @@ async def _send_deferred_welcome(phone_number: str, session: dict) -> None:
     sequence = welcome_data.get("sequence", [])
     total_minutes = welcome_data.get("total_estimated_minutes", 0)
     await send_welcome_message(phone_number, patient_name, sequence, total_minutes)
+
+
+# ── WhatsApp check-in handler ──────────────────────────────────────────────
+
+
+async def _handle_checkin_message(phone_number: str, message_text: str) -> None:
+    """Parse CHECKIN_{clinic_id}_{area_id} and register the visit via the API."""
+    parts = message_text.strip().split("_", 2)
+    # Expected: ["CHECKIN", clinic_id, area_id]
+    if len(parts) != 3:
+        await send_text_message(
+            phone_number,
+            "El formato del mensaje no es valido. "
+            "Por favor escanea el codigo QR nuevamente.",
+        )
+        return
+
+    _, clinic_id, area_id = parts
+
+    # Check for existing active session (avoid duplicate check-ins)
+    existing_session = await get_session(phone_number)
+    if existing_session is not None:
+        await send_text_message(
+            phone_number,
+            "Ya tienes una visita activa. "
+            "Escribe cualquier mensaje para consultar tu estado.",
+        )
+        return
+
+    result = await register_visit(
+        phone_number=phone_number,
+        clinic_id=clinic_id,
+        study_ids=[area_id],
+        has_appointment=False,
+        is_urgent=False,
+    )
+
+    if result is None:
+        await send_text_message(
+            phone_number,
+            "No pudimos registrar tu visita. "
+            "Por favor acercate a recepcion para ayuda.",
+        )
+        return
+
+    # The API triggers a welcome notification to this bot via /bot/internal/notify,
+    # which will send the welcome message with the sequence. Nothing else to do here.
+    logger.info("WhatsApp check-in completed for %s, visit_id=%s", phone_number, result.get("visit_id"))
 
 
 # ── Internal notification endpoint ──────────────────────────────────────────
